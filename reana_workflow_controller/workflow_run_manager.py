@@ -17,6 +17,7 @@ from kubernetes.client.rest import ApiException
 from reana_commons.config import (
     CVMFS_REPOSITORIES,
     K8S_CERN_EOS_AVAILABLE,
+    K8S_USE_SECURITY_CONTEXT,
     REANA_COMPONENT_NAMING_SCHEME,
     REANA_COMPONENT_PREFIX,
     REANA_INFRASTRUCTURE_KUBERNETES_NAMESPACE,
@@ -476,10 +477,11 @@ class KubernetesWorkflowRunManager(WorkflowRunManager):
             ]
         )
         workflow_engine_container.env.extend(workflow_engine_env_vars)
-        workflow_engine_container.security_context = client.V1SecurityContext(
-            run_as_group=WORKFLOW_RUNTIME_USER_GID,
-            run_as_user=WORKFLOW_RUNTIME_USER_UID,
-        )
+        if K8S_USE_SECURITY_CONTEXT:
+            workflow_engine_container.security_context = client.V1SecurityContext(
+                run_as_group=WORKFLOW_RUNTIME_USER_GID,
+                run_as_user=WORKFLOW_RUNTIME_USER_UID,
+            )
         workflow_engine_container.volume_mounts = [workspace_mount]
         secrets_store = REANAUserSecretsStore(owner_id)
         job_controller_env_secrets = secrets_store.get_env_secrets_as_k8s_spec()
@@ -502,6 +504,10 @@ class KubernetesWorkflowRunManager(WorkflowRunManager):
                 {"name": "REANA_USER_ID", "value": owner_id},
                 {"name": "CERN_USER", "value": user},
                 {"name": "USER", "value": user},  # Required by HTCondor
+                {
+                    "name": "K8S_USE_SECURITY_CONTEXT",
+                    "value": str(K8S_USE_SECURITY_CONTEXT),
+                },
                 {"name": "K8S_CERN_EOS_AVAILABLE", "value": K8S_CERN_EOS_AVAILABLE},
                 {"name": "IMAGE_PULL_SECRETS", "value": ",".join(IMAGE_PULL_SECRETS)},
                 {
@@ -601,7 +607,7 @@ class KubernetesWorkflowRunManager(WorkflowRunManager):
     def _create_job_controller_startup_cmd(self, user=None):
         """Create job controller startup cmd."""
         base_cmd = "flask run -h 0.0.0.0;"
-        if user:
+        if user and K8S_USE_SECURITY_CONTEXT:
             add_group_cmd = "groupadd -f -g {} {};".format(
                 WORKFLOW_RUNTIME_USER_GID, WORKFLOW_RUNTIME_USER_GID
             )
@@ -617,4 +623,4 @@ class KubernetesWorkflowRunManager(WorkflowRunManager):
             full_cmd = add_group_cmd + add_user_cmd + chown_workspace_cmd + run_app_cmd
             return [full_cmd]
         else:
-            return base_cmd.split()
+            return [base_cmd]
